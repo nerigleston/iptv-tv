@@ -183,7 +183,7 @@ private fun CategoryDrawer(vm: MainViewModel, categories: List<Category>, total:
                         close()
                     },
                     selected = c?.id == vm.vodCategory,
-                    radius = 10,
+                    radius = 5,
                     modifier = if (i == selected) Modifier.focusRequester(focus) else Modifier,
                 ) {
                     Row(Modifier.height(44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -278,7 +278,7 @@ private fun RowTitle(text: String) {
 // Último cartão da fileira: abre a categoria inteira em grade.
 @Composable
 private fun SeeAllCard(count: Int, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(6.dp)
     Surface(
         onClick = onClick,
         modifier = Modifier.width(130.dp).aspectRatio(2f / 3f),
@@ -326,7 +326,7 @@ private fun PosterGrid(vm: MainViewModel, items: List<VodItem>) {
 
 @Composable
 private fun PosterCard(item: VodItem, onClick: () -> Unit, modifier: Modifier) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(6.dp)
     var focused by remember { mutableStateOf(false) }
     Column(modifier) {
         Surface(
@@ -356,7 +356,7 @@ private fun PosterCard(item: VodItem, onClick: () -> Unit, modifier: Modifier) {
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(6.dp)
-                            .background(Color(0xCC000000), RoundedCornerShape(999.dp))
+                            .background(Color(0xCC000000), RoundedCornerShape(6.dp))
                             .padding(horizontal = 7.dp, vertical = 3.dp),
                     )
                 }
@@ -382,7 +382,7 @@ fun SeriesDetail(vm: MainViewModel) {
 
     Row(Modifier.fillMaxSize().background(C.Shell).padding(horizontal = 48.dp, vertical = 27.dp)) {
         Box(
-            Modifier.width(240.dp).aspectRatio(2f / 3f).background(C.Widget, RoundedCornerShape(14.dp)),
+            Modifier.width(240.dp).aspectRatio(2f / 3f).background(C.Widget, RoundedCornerShape(8.dp)),
         ) {
             AsyncImage(model = series.poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
@@ -622,7 +622,7 @@ fun VodPlayerScreen(vm: MainViewModel, playback: VodPlayback) {
 
 @Composable
 fun RecentCard(progress: WatchProgress, onClick: () -> Unit, onLongClick: () -> Unit, modifier: Modifier) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(6.dp)
     var focused by remember { mutableStateOf(false) }
     val item = progress.item
     Column(modifier) {
@@ -695,7 +695,7 @@ fun ResumeScreen(vm: MainViewModel, prompt: ResumePrompt) {
             Modifier.align(Alignment.CenterStart).padding(horizontal = 96.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.width(220.dp).aspectRatio(2f / 3f).background(C.Widget, RoundedCornerShape(14.dp))) {
+            Box(Modifier.width(220.dp).aspectRatio(2f / 3f).background(C.Widget, RoundedCornerShape(8.dp))) {
                 AsyncImage(model = item.poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             Spacer(Modifier.width(40.dp))

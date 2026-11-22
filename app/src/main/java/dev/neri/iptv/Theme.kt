@@ -109,7 +109,7 @@ fun TvRow(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     onLongClick: (() -> Unit)? = null,
-    radius: Int = 12,
+    radius: Int = 6,
     content: @Composable () -> Unit,
 ) {
     val shape = RoundedCornerShape(radius.dp)
@@ -145,7 +145,7 @@ fun Pill(
     horizontalPadding: Dp = 14.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(999.dp)
+    val shape = RoundedCornerShape(6.dp)
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -201,7 +201,7 @@ fun TvTextField(
     val boxFocus = remember { FocusRequester() }
     val fieldFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(6.dp)
     val textStyle = TextStyle(fontSize = 15.sp, color = C.Heading)
     val finish = {
         returnFocus = true

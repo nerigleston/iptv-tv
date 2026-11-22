@@ -193,7 +193,7 @@ private fun LiveSection(vm: MainViewModel) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .background(Color(0xCC000000), RoundedCornerShape(16.dp))
+                    .background(Color(0xCC000000), RoundedCornerShape(8.dp))
                     .padding(horizontal = 28.dp, vertical = 18.dp),
             )
         }
@@ -264,7 +264,7 @@ private fun ChannelPanel(
                             runCatching { channelFocus.requestFocus() }
                         },
                         selected = f == vm.filter,
-                        radius = 10,
+                        radius = 5,
                         modifier = (if (i == selected) Modifier.focusRequester(groupFocus) else Modifier)
                             .onFocusChanged { if (it.isFocused && f != vm.filter) vm.filter = f },
                     ) {
@@ -384,7 +384,7 @@ private fun ChannelItem(
 @Composable
 fun Logo(channel: Channel, number: Int, size: Int) {
     Box(
-        Modifier.size(size.dp).background(C.Widget, RoundedCornerShape(10.dp)),
+        Modifier.size(size.dp).background(C.Widget, RoundedCornerShape(6.dp)),
         contentAlignment = Alignment.Center,
     ) {
         if (channel.logo != null) {
