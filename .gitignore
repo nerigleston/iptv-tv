@@ -9,3 +9,6 @@ local.properties
 
 # Passo a passo com a URL e a senha da lista
 INSTALACAO.md
+
+# Saída do docker-build.sh
+saida-docker/

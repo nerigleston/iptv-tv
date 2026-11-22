@@ -350,7 +350,7 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
     }
 
     Column(modifier.background(Color.Black)) {
-        if (!vm.fullscreen) PlayerHeader(vm, channel, now)
+        if (!vm.fullscreen) PlayerHeader(vm, player, channel, now)
         Box(
             Modifier
                 .weight(1f)
@@ -365,12 +365,19 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
                         Key.ChannelDown -> { showInfo = true; vm.zap(-1); true }
                         Key.DirectionUp -> if (vm.fullscreen) { showInfo = true; vm.zap(1); true } else false
                         Key.DirectionDown -> if (vm.fullscreen) { showInfo = true; vm.zap(-1); true } else false
+                        // Em tela cheia, ← → mexem no volume.
+                        Key.DirectionLeft -> if (vm.fullscreen) { showInfo = true; player.changeVolume(-5); true } else false
+                        Key.DirectionRight -> if (vm.fullscreen) { showInfo = true; player.changeVolume(5); true } else false
+                        Key.VolumeMute -> { showInfo = true; player.toggleMute(); true }
+                        Key.MediaPlayPause, Key.MediaPause, Key.MediaPlay -> { showInfo = true; player.togglePause(); true }
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                             when {
                                 player.error != null -> player.retry()
-                                player.buffering && vm.fullscreen -> player.reconnect()
+                                player.buffering && !player.paused && vm.fullscreen -> player.reconnect()
+                                player.paused -> player.unpause()
                                 !vm.fullscreen -> vm.fullscreen = true
-                                else -> showInfo = !showInfo
+                                // Em tela cheia, OK pausa; despausar volta para o ao vivo.
+                                else -> { showInfo = true; player.togglePause() }
                             }
                             true
                         }
@@ -395,8 +402,17 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
             when {
                 channel == null ->
                     Text("Escolha um canal na lista", style = T.Subtitle, modifier = Modifier.align(Alignment.Center))
-                vm.fullscreen && (showInfo || player.buffering || player.error != null) ->
+                vm.fullscreen && (showInfo || player.paused || player.buffering || player.error != null) ->
                     InfoOverlay(vm, player, channel, now, next, Modifier.align(Alignment.BottomStart))
+                player.paused ->
+                    Text(
+                        "❚❚  Pausado · OK no vídeo volta para o ao vivo",
+                        style = T.Subtitle.copy(color = C.Heading),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(Color(0xCC000000), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
                 player.error != null || player.buffering ->
                     Text(
                         player.error?.let { "$it · OK para tentar de novo" } ?: "Carregando…",
@@ -411,7 +427,7 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
         }
         if (!vm.fullscreen && channel != null) {
             Text(
-                "OK no vídeo abre a tela cheia · CH+/CH− trocam de canal",
+                "OK no vídeo abre a tela cheia · CH+/CH− trocam de canal · na tela cheia: OK pausa, ← → volume",
                 style = T.Meta.copy(color = C.Muted),
                 modifier = Modifier.fillMaxWidth().background(C.Content).padding(horizontal = 16.dp, vertical = 8.dp),
             )
@@ -421,7 +437,7 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
 
 // Cabeçalho como o standard-panel-header: título à esquerda e ações em pílula.
 @Composable
-private fun PlayerHeader(vm: MainViewModel, channel: Channel?, now: Programme?) {
+private fun PlayerHeader(vm: MainViewModel, player: TvPlayer, channel: Channel?, now: Programme?) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -460,6 +476,14 @@ private fun PlayerHeader(vm: MainViewModel, channel: Channel?, now: Programme?) 
                 val fav = channel.url in vm.favorites
                 Pill(onClick = { vm.toggleFavorite(channel) }, active = fav) { Text(if (fav) "★" else "☆") }
             }
+            Pill(onClick = { player.togglePause() }, active = player.paused, enabled = channel != null) {
+                Text(if (player.paused) "▶ Ao vivo" else "❚❚ Pausar")
+            }
+            Pill(onClick = { player.changeVolume(-10) }, enabled = channel != null) { Text("Vol −") }
+            Pill(onClick = { player.toggleMute() }, active = player.muted, enabled = channel != null) {
+                Text(if (player.muted) "Mudo" else "${player.volume}%")
+            }
+            Pill(onClick = { player.changeVolume(10) }, enabled = channel != null) { Text("Vol +") }
             Pill(onClick = { vm.showEpg = !vm.showEpg }, active = vm.showEpg && vm.hasEpg, enabled = vm.hasEpg) {
                 Text("Guia")
             }
@@ -528,8 +552,10 @@ private fun InfoOverlay(
             if (next != null) Text("A seguir: ${next.title} às ${formatTime(next.start)}", style = T.Meta.copy(fontSize = 12.sp))
             when {
                 player.error != null -> Text("${player.error} · OK para tentar de novo", style = T.Subtitle.copy(color = C.Live))
+                player.paused -> Text("❚❚  Pausado · OK volta para o ao vivo", style = T.Subtitle.copy(color = C.Selection))
                 player.buffering -> Text("Carregando…", style = T.Subtitle)
             }
+            VolumeLine(player)
         }
     }
 }
@@ -629,5 +655,18 @@ private fun ProgrammeItem(p: Programme, live: Boolean, past: Boolean, now: Long)
                 Text(p.description, style = T.Meta.copy(fontSize = 12.sp), maxLines = 5, overflow = TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+// Volume atual: "Volume 70%" com barrinha, ou "Mudo".
+@Composable
+fun VolumeLine(player: TvPlayer, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (player.muted) "Mudo" else "Volume ${player.volume}%",
+            style = T.Meta.copy(fontSize = 12.sp, color = if (player.muted) C.Muted else C.Body),
+            modifier = Modifier.width(90.dp),
+        )
+        ProgressBar(if (player.muted) 0f else player.volume / 100f, Modifier.width(120.dp))
     }
 }

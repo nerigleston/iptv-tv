@@ -401,8 +401,7 @@ fun VodPlayerScreen(vm: MainViewModel, playback: VodPlayback) {
                         when {
                             player.error != null -> player.retry()
                             player.buffering -> player.reconnect()
-                            player.exo.isPlaying -> player.exo.pause()
-                            else -> player.exo.play()
+                            else -> player.togglePause()
                         }
                         true
                     }
@@ -410,7 +409,10 @@ fun VodPlayerScreen(vm: MainViewModel, playback: VodPlayback) {
                     Key.DirectionRight, Key.MediaFastForward -> { seek(10_000); true }
                     Key.ChannelUp, Key.MediaNext -> { vm.nextVod(1); true }
                     Key.ChannelDown, Key.MediaPrevious -> { vm.nextVod(-1); true }
-                    Key.DirectionUp, Key.DirectionDown -> true
+                    // ↑ ↓ mexem no volume do app.
+                    Key.DirectionUp -> { player.changeVolume(5); true }
+                    Key.DirectionDown -> { player.changeVolume(-5); true }
+                    Key.VolumeMute -> { player.toggleMute(); true }
                     else -> false
                 }
                 if (handled) {
@@ -460,11 +462,18 @@ fun VodPlayerScreen(vm: MainViewModel, playback: VodPlayback) {
                     player.error != null -> "${player.error} · OK para tentar de novo"
                     player.buffering -> "Carregando…"
                     else -> buildString {
-                        append("OK pausa · ← → 10 s")
+                        append("OK pausa · ← → 10 s · ↑ ↓ volume")
                         if (playback.queue.size > 1) append(" · CH+/CH− episódio ${playback.index + 1} de ${playback.queue.size}")
                     }
                 }
-                Text(status, style = T.Meta.copy(fontSize = 12.sp, color = if (player.error != null) C.Live else C.Body))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        status,
+                        style = T.Meta.copy(fontSize = 12.sp, color = if (player.error != null) C.Live else C.Body),
+                        modifier = Modifier.weight(1f),
+                    )
+                    VolumeLine(player)
+                }
             }
         }
     }

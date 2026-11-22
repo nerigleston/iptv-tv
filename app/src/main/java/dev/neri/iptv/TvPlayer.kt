@@ -34,6 +34,17 @@ class TvPlayer(context: Context, userAgent: String) {
     var error by mutableStateOf<String?>(null)
         private set
 
+    // Volume do app (0–100), guardado entre sessões; vale para TV, filmes e séries.
+    private val prefs = context.getSharedPreferences("iptv", Context.MODE_PRIVATE)
+    var volume by mutableStateOf(prefs.getInt("volume", 100))
+        private set
+    var muted by mutableStateOf(prefs.getBoolean("muted", false))
+        private set
+
+    // Pausado pelo usuário. No ao vivo, despausar reabre o canal no ao vivo.
+    var paused by mutableStateOf(false)
+        private set
+
     // Servidores que mandam MPEG-TS mesmo quando a URL pede .m3u8.
     private val tsHosts = mutableSetOf<String>()
 
@@ -123,11 +134,56 @@ class TvPlayer(context: Context, userAgent: String) {
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
             .setLoadControl(loadControl)
             .build()
-            .apply { addListener(listener) }
+            .apply {
+                addListener(listener)
+                volume = if (muted) 0f else this@TvPlayer.volume / 100f
+            }
+    }
+
+    val isLive get() = exo.isCurrentMediaItemLive || exo.duration == C.TIME_UNSET
+
+    fun pause() {
+        paused = true
+        exo.pause()
+    }
+
+    /** Continua de onde parou; no ao vivo, volta para o ao vivo em vez de ficar atrasado. */
+    fun unpause() {
+        paused = false
+        if (isLive && exo.mediaItemCount > 0) {
+            reconnects = 0
+            error = null
+            exo.currentMediaItem?.let { exo.setMediaItem(it) }
+            exo.prepare()
+            exo.play()
+        } else {
+            resume()
+        }
+    }
+
+    fun togglePause() = if (paused || !exo.isPlaying) unpause() else pause()
+
+    fun updateVolume(value: Int) {
+        volume = value.coerceIn(0, 100)
+        if (volume > 0) muted = false
+        applyVolume()
+    }
+
+    fun changeVolume(delta: Int) = updateVolume(volume + delta)
+
+    fun toggleMute() {
+        muted = !muted
+        applyVolume()
+    }
+
+    private fun applyVolume() {
+        exo.volume = if (muted) 0f else volume / 100f
+        prefs.edit().putInt("volume", volume).putBoolean("muted", muted).apply()
     }
 
     fun play(url: String, startMs: Long = 0) {
         error = null
+        paused = false
         formatRetried = false
         reconnects = 0
         val mimeType = MimeTypes.VIDEO_MP2T.takeIf { Uri.parse(url).host in tsHosts }
