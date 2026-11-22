@@ -219,6 +219,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // "Ver todos" numa fileira: abre a categoria em grade.
+    fun openCategory(id: String) {
+        vodCategory = id
+        vodFocusId = null
+        focusPlaying = true
+    }
+
     fun vodCategoriesFor(s: Section) = if (s == Section.MOVIES) movieCategories else seriesCategories
 
     fun vodItems(): List<VodItem> {
@@ -510,6 +517,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 focusPlaying = true
             }
             section != Section.LIVE && vodQuery.isNotEmpty() -> vodQuery = ""
+            section != Section.LIVE && vodCategory != null -> {
+                vodFocusId = null
+                vodCategory = null
+                focusPlaying = true
+            }
             section == Section.LIVE && query.isNotEmpty() -> query = ""
             else -> screen = Screen.Hub
         }

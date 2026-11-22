@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -76,92 +77,148 @@ private fun shortCategory(name: String) = if ('|' in name) name.substringAfter('
 
 @Composable
 fun VodBrowser(vm: MainViewModel) {
-    val items = remember(vm.section, vm.vodCategory, vm.vodQuery, vm.movies, vm.seriesList) { vm.vodItems() }
-    val counts = remember(vm.section, vm.movies, vm.seriesList) { vm.vodCounts() }
     val categories = vm.vodCategoriesFor(vm.section)
+    val all = if (vm.section == Section.MOVIES) vm.movies else vm.seriesList
     val noun = if (vm.section == Section.MOVIES) "filmes" else "séries"
+    val searching = vm.vodQuery.isNotBlank()
+    val category = vm.vodCategory?.let { id -> categories.firstOrNull { it.id == id } }
+    val title = when {
+        searching -> "Busca em ${vm.section.label}"
+        category != null -> shortCategory(category.name)
+        else -> vm.section.label
+    }
 
     Column(Modifier.fillMaxSize().background(C.Shell)) {
-    TopBar(vm, vm.section.label, vm.current?.name)
-    Row(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.width(300.dp).fillMaxHeight().background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 12.dp),
+        Row(
+            Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            TvTextField(vm.vodQuery, { vm.vodQuery = it }, placeholder = "Buscar $noun", imeAction = ImeAction.Search)
-            Spacer(Modifier.height(10.dp))
-            Text("${categories.size} CATEGORIAS", style = T.Label, modifier = Modifier.padding(start = 12.dp, bottom = 6.dp))
-            CategoryList(vm, categories, counts, total = if (vm.section == Section.MOVIES) vm.movies.size else vm.seriesList.size)
-        }
-
-        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 28.dp, end = 28.dp, top = 20.dp)) {
-            val title = vm.vodCategory?.let { id -> categories.firstOrNull { it.id == id }?.name?.let(::shortCategory) }
-                ?: if (vm.section == Section.MOVIES) "Todos os filmes" else "Todas as séries"
-            Text(title, style = T.Title.copy(fontSize = 22.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (items.size == 1) "1 título" else "${items.size} títulos", style = T.Subtitle)
-            Spacer(Modifier.height(8.dp))
-            when {
-                vm.vodLoading && items.isEmpty() -> Text("Carregando $noun…", style = T.Subtitle, modifier = Modifier.padding(top = 24.dp))
-                items.isEmpty() -> Text("Nada encontrado.", style = T.Subtitle, modifier = Modifier.padding(top = 24.dp))
-                else -> PosterGrid(vm, items)
+            Column(Modifier.weight(1f)) {
+                Text(title, style = T.Title.copy(fontSize = 26.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (searching || category != null) {
+                    val count = vm.vodItems().size
+                    Text(if (count == 1) "1 título · Voltar para sair" else "$count títulos · Voltar para sair", style = T.Subtitle)
+                }
             }
+            StatusLine(vm)
+            Spacer(Modifier.width(16.dp))
+            TvTextField(vm.vodQuery, { vm.vodQuery = it }, placeholder = "Buscar $noun", imeAction = ImeAction.Search, modifier = Modifier.width(320.dp))
         }
-    }
+        when {
+            vm.vodLoading && all.isEmpty() ->
+                Text("Carregando $noun…", style = T.Subtitle.copy(fontSize = 16.sp), modifier = Modifier.padding(48.dp))
+            searching || category != null -> {
+                val items = remember(vm.section, vm.vodCategory, vm.vodQuery, all) { vm.vodItems() }
+                if (items.isEmpty()) {
+                    Text("Nada encontrado.", style = T.Subtitle, modifier = Modifier.padding(48.dp))
+                } else {
+                    Box(Modifier.padding(horizontal = 44.dp)) { PosterGrid(vm, items) }
+                }
+            }
+            all.isEmpty() -> Text("Nada por aqui.", style = T.Subtitle, modifier = Modifier.padding(48.dp))
+            else -> VodRows(vm, categories, all)
+        }
     }
 }
 
+private const val ROW_LIMIT = 30
+
+// Fileiras no estilo Google TV: Continuar assistindo + uma fileira por categoria.
 @Composable
-private fun CategoryList(vm: MainViewModel, categories: List<Category>, counts: Map<String, Int>, total: Int) {
-    val selectedIndex = vm.vodCategory?.let { id -> categories.indexOfFirst { it.id == id } + 1 } ?: 0
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = (selectedIndex - 3).coerceAtLeast(0))
+private fun VodRows(vm: MainViewModel, categories: List<Category>, all: List<VodItem>) {
+    val byCategory = remember(all) { all.groupBy { it.categoryId } }
+    val rows = remember(categories, byCategory) { categories.filter { !byCategory[it.id].isNullOrEmpty() } }
+    val recents = vm.recents
+    val offset = if (recents.isNotEmpty()) 1 else 0
+    // Volta o foco para o título que estava aberto (ou o primeiro da tela).
+    val targetRow = rows.indexOfFirst { c -> byCategory[c.id]!!.take(ROW_LIMIT).any { it.id == vm.vodFocusId } }
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = (targetRow + offset).coerceAtLeast(0))
     val focus = remember { FocusRequester() }
-    // Sem item ativo na grade, o foco começa nas categorias.
-    LaunchedEffect(vm.focusPlaying, vm.vodFocusId) {
-        if (vm.focusPlaying && vm.vodFocusId == null) {
+    LaunchedEffect(vm.focusPlaying, rows.size) {
+        if (vm.focusPlaying && rows.isNotEmpty()) {
             withFrameNanos { }
-            runCatching { focus.requestFocus() }
-            vm.focusPlaying = false
+            withFrameNanos { }
+            if (runCatching { focus.requestFocus() }.isSuccess) vm.focusPlaying = false
         }
     }
-    LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        item {
-            CategoryRow("Todas", total, vm.vodCategory == null, if (selectedIndex == 0) Modifier.focusRequester(focus) else Modifier) {
-                vm.vodCategory = null
+
+    LazyColumn(state = state, contentPadding = PaddingValues(bottom = 48.dp)) {
+        if (recents.isNotEmpty()) {
+            item(key = "recentes") {
+                RowTitle("Continuar assistindo")
+                LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    itemsIndexed(recents.take(20), key = { _, p -> p.item.url }) { i, progress ->
+                        RecentCard(
+                            progress,
+                            onClick = { vm.openRecent(progress) },
+                            onLongClick = { vm.removeRecent(progress) },
+                            modifier = Modifier.width(130.dp).then(if (targetRow < 0 && i == 0) Modifier.focusRequester(focus) else Modifier),
+                        )
+                    }
+                }
             }
         }
-        itemsIndexed(categories, key = { _, c -> c.id }) { i, c ->
-            CategoryRow(
-                shortCategory(c.name),
-                counts[c.id] ?: 0,
-                vm.vodCategory == c.id,
-                if (selectedIndex == i + 1) Modifier.focusRequester(focus) else Modifier,
-            ) { vm.vodCategory = c.id }
+        itemsIndexed(rows, key = { _, c -> c.id }) { r, c ->
+            val items = byCategory[c.id]!!
+            val shown = items.take(ROW_LIMIT)
+            val target = if (r == targetRow) shown.indexOfFirst { it.id == vm.vodFocusId } else if (targetRow < 0 && recents.isEmpty() && r == 0) 0 else -1
+            val rowState = rememberLazyListState(initialFirstVisibleItemIndex = target.coerceAtLeast(0))
+            RowTitle("${shortCategory(c.name)}  ·  ${items.size}")
+            LazyRow(
+                state = rowState,
+                contentPadding = PaddingValues(horizontal = 48.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                itemsIndexed(shown, key = { _, it -> it.id }) { i, item ->
+                    PosterCard(
+                        item,
+                        onClick = { vm.openVod(item) },
+                        modifier = Modifier.width(130.dp).then(if (i == target) Modifier.focusRequester(focus) else Modifier),
+                    )
+                }
+                if (items.size > ROW_LIMIT) {
+                    item(key = "todos") { SeeAllCard(items.size) { vm.openCategory(c.id) } }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun CategoryRow(name: String, count: Int, selected: Boolean, modifier: Modifier, onSelect: () -> Unit) {
-    TvRow(
-        onClick = onSelect,
-        selected = selected,
-        radius = 8,
-        // Como nos grupos ao vivo: só passar o foco já troca a grade.
-        modifier = modifier.onFocusChanged { if (it.isFocused && !selected) onSelect() },
+private fun RowTitle(text: String) {
+    Text(text, style = T.Title.copy(fontSize = 17.sp), modifier = Modifier.padding(start = 52.dp, top = 14.dp))
+}
+
+// Último cartão da fileira: abre a categoria inteira em grade.
+@Composable
+private fun SeeAllCard(count: Int, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.width(130.dp).aspectRatio(2f / 3f),
+        shape = ClickableSurfaceDefaults.shape(shape),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        colors = ClickableSurfaceDefaults.colors(containerColor = C.Widget, focusedContainerColor = C.CardHover),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(BorderStroke(1.dp, C.Separator), shape = shape),
+            focusedBorder = Border(BorderStroke(3.dp, C.FocusRing), shape = shape),
+        ),
     ) {
-        Row(Modifier.height(40.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(name, style = T.Row.copy(color = androidx.tv.material3.LocalContentColor.current), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("$count", style = T.Meta.copy(fontSize = 12.sp, color = C.Muted))
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text("Ver todos", style = T.ChannelName)
+            Text("$count títulos", style = T.Meta)
         }
     }
 }
 
 @Composable
 private fun PosterGrid(vm: MainViewModel, items: List<VodItem>) {
-    val target = items.indexOfFirst { it.id == vm.vodFocusId }
-    val state = rememberLazyGridState(initialFirstVisibleItemIndex = target.coerceAtLeast(0))
+    // Sem título marcado (categoria recém-aberta, busca), o foco vai para o primeiro.
+    val target = items.indexOfFirst { it.id == vm.vodFocusId }.coerceAtLeast(0)
+    val state = rememberLazyGridState(initialFirstVisibleItemIndex = target)
     val focus = remember { FocusRequester() }
     LaunchedEffect(vm.focusPlaying) {
-        if (vm.focusPlaying && target >= 0) {
+        if (vm.focusPlaying) {
             state.scrollToItem(target)
             withFrameNanos { }
             runCatching { focus.requestFocus() }
@@ -190,7 +247,7 @@ private fun PosterCard(item: VodItem, onClick: () -> Unit, modifier: Modifier) {
             onClick = onClick,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).onFocusChanged { focused = it.isFocused },
             shape = ClickableSurfaceDefaults.shape(shape),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
             colors = ClickableSurfaceDefaults.colors(containerColor = C.Widget, focusedContainerColor = C.Widget),
             border = ClickableSurfaceDefaults.border(
                 border = Border(BorderStroke(1.dp, C.Separator), shape = shape),
@@ -488,7 +545,7 @@ fun RecentCard(progress: WatchProgress, onClick: () -> Unit, onLongClick: () -> 
             onLongClick = onLongClick,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).onFocusChanged { focused = it.isFocused },
             shape = ClickableSurfaceDefaults.shape(shape),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
             colors = ClickableSurfaceDefaults.colors(containerColor = C.Widget, focusedContainerColor = C.Widget),
             border = ClickableSurfaceDefaults.border(
                 border = Border(BorderStroke(1.dp, C.Separator), shape = shape),
