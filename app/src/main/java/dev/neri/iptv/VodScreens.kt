@@ -81,11 +81,12 @@ fun VodBrowser(vm: MainViewModel) {
     val categories = vm.vodCategoriesFor(vm.section)
     val noun = if (vm.section == Section.MOVIES) "filmes" else "séries"
 
-    Row(Modifier.fillMaxSize().background(C.Shell)) {
+    Column(Modifier.fillMaxSize().background(C.Shell)) {
+    TopBar(vm, vm.section.label, vm.current?.name)
+    Row(Modifier.fillMaxSize()) {
         Column(
-            Modifier.width(300.dp).fillMaxHeight().background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 16.dp),
+            Modifier.width(300.dp).fillMaxHeight().background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 12.dp),
         ) {
-            SectionPills(vm)
             TvTextField(vm.vodQuery, { vm.vodQuery = it }, placeholder = "Buscar $noun", imeAction = ImeAction.Search)
             Spacer(Modifier.height(10.dp))
             Text("${categories.size} CATEGORIAS", style = T.Label, modifier = Modifier.padding(start = 12.dp, bottom = 6.dp))
@@ -96,11 +97,7 @@ fun VodBrowser(vm: MainViewModel) {
             val title = vm.vodCategory?.let { id -> categories.firstOrNull { it.id == id }?.name?.let(::shortCategory) }
                 ?: if (vm.section == Section.MOVIES) "Todos os filmes" else "Todas as séries"
             Text(title, style = T.Title.copy(fontSize = 22.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (items.size == 1) "1 título" else "${items.size} títulos", style = T.Subtitle)
-                Spacer(Modifier.width(12.dp))
-                StatusLine(vm)
-            }
+            Text(if (items.size == 1) "1 título" else "${items.size} títulos", style = T.Subtitle)
             Spacer(Modifier.height(8.dp))
             when {
                 vm.vodLoading && items.isEmpty() -> Text("Carregando $noun…", style = T.Subtitle, modifier = Modifier.padding(top = 24.dp))
@@ -108,6 +105,7 @@ fun VodBrowser(vm: MainViewModel) {
                 else -> PosterGrid(vm, items)
             }
         }
+    }
     }
 }
 
@@ -479,74 +477,8 @@ fun VodPlayerScreen(vm: MainViewModel, playback: VodPlayback) {
     }
 }
 
-// ---------- Recentes ----------
-
 @Composable
-fun RecentScreen(vm: MainViewModel) {
-    val items = vm.recents
-    Row(Modifier.fillMaxSize().background(C.Shell)) {
-        Column(
-            Modifier.width(300.dp).fillMaxHeight().background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 16.dp),
-        ) {
-            SectionPills(vm)
-            Text("CONTINUAR ASSISTINDO", style = T.Label, modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 6.dp))
-            Text(
-                "Filmes e episódios que você começou. OK para continuar ou recomeçar; segure OK para tirar da lista.",
-                style = T.Subtitle,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-        }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(start = 28.dp, end = 28.dp, top = 20.dp)) {
-            Text("Recentes", style = T.Title.copy(fontSize = 22.sp))
-            Text(if (items.size == 1) "1 título" else "${items.size} títulos", style = T.Subtitle)
-            Spacer(Modifier.height(8.dp))
-            if (items.isEmpty()) {
-                Text(
-                    "Nada por aqui ainda. Comece um filme ou episódio e ele aparece aqui com o tempo em que você parou.",
-                    style = T.Subtitle,
-                    modifier = Modifier.padding(top = 24.dp),
-                )
-                // Sem itens, o foco fica nas pílulas de seção.
-                return@Column
-            }
-            RecentGrid(vm, items)
-        }
-    }
-}
-
-@Composable
-private fun RecentGrid(vm: MainViewModel, items: List<WatchProgress>) {
-    val target = items.indexOfFirst { it.item.url == vm.vodFocusId }.coerceAtLeast(0)
-    val state = rememberLazyGridState(initialFirstVisibleItemIndex = target)
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(vm.focusPlaying, items.size) {
-        if (vm.focusPlaying) {
-            state.scrollToItem(target)
-            withFrameNanos { }
-            runCatching { focus.requestFocus() }
-            vm.focusPlaying = false
-        }
-    }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(130.dp),
-        state = state,
-        contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp, start = 4.dp, end = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        itemsIndexed(items, key = { _, it -> it.item.url }) { i, progress ->
-            RecentCard(
-                progress,
-                onClick = { vm.openRecent(progress) },
-                onLongClick = { vm.removeRecent(progress) },
-                modifier = if (i == target) Modifier.focusRequester(focus) else Modifier,
-            )
-        }
-    }
-}
-
-@Composable
-private fun RecentCard(progress: WatchProgress, onClick: () -> Unit, onLongClick: () -> Unit, modifier: Modifier) {
+fun RecentCard(progress: WatchProgress, onClick: () -> Unit, onLongClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
     var focused by remember { mutableStateOf(false) }
     val item = progress.item

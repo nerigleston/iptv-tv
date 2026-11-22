@@ -40,7 +40,8 @@ fun App(vm: MainViewModel) {
         Surface(Modifier.fillMaxSize()) {
             BackHandler(enabled = vm.canGoBack) { vm.back() }
             when (val screen = vm.screen) {
-                Screen.Home -> HomeScreen(vm)
+                Screen.Hub -> HubScreen(vm)
+                Screen.Settings -> SettingsScreen(vm)
                 is Screen.Form -> FormScreen(vm, screen.editing)
                 Screen.Watch -> WatchScreen(vm)
             }

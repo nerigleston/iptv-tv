@@ -1,6 +1,16 @@
 package dev.neri.iptv
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Surface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,8 +55,121 @@ import java.util.Locale
 private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("pt-BR"))
 private val dateTimeFormat = SimpleDateFormat("dd/MM 'às' HH:mm", Locale.forLanguageTag("pt-BR"))
 
+// Barra do topo das telas internas: "‹ Início", título e status.
 @Composable
-fun HomeScreen(vm: MainViewModel) {
+fun TopBar(vm: MainViewModel, title: String, subtitle: String? = null, showBack: Boolean = true, trailing: @Composable () -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().background(C.Rail).padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        if (showBack) Pill(onClick = vm::goHome) { Text("‹  Início") }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = T.Title.copy(fontSize = 20.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let { Text(it, style = T.Subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        StatusLine(vm)
+        trailing()
+    }
+}
+
+// ---------- Início ----------
+
+@Composable
+fun HubScreen(vm: MainViewModel) {
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { first.requestFocus() }
+    }
+    Column(Modifier.fillMaxSize().background(C.Shell).padding(horizontal = 48.dp, vertical = 32.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.banner), null, Modifier.size(width = 72.dp, height = 40.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Telvo", style = T.Title.copy(fontSize = 22.sp))
+                Text(vm.current?.name.orEmpty(), style = T.Subtitle)
+            }
+            StatusLine(vm)
+        }
+        Spacer(Modifier.height(36.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            HubCard("TV", "${vm.channels.size} canais ao vivo", "▶", C.Selection, Modifier.weight(1f).focusRequester(first)) {
+                vm.openSection(Section.LIVE)
+            }
+            HubCard(
+                "Séries", if (vm.seriesList.isEmpty()) "Temporadas e episódios" else "${vm.seriesList.size} séries",
+                "▤", Color(0xFFC084FC), Modifier.weight(1f), enabled = vm.hasVod,
+            ) { vm.openSection(Section.SERIES) }
+            HubCard(
+                "Filmes", if (vm.movies.isEmpty()) "Catálogo completo" else "${vm.movies.size} filmes",
+                "◉", Color(0xFFFBBF24), Modifier.weight(1f), enabled = vm.hasVod,
+            ) { vm.openSection(Section.MOVIES) }
+            HubCard("Configurações", "Listas e conta", "⚙", C.Body, Modifier.weight(1f), onClick = vm::openSettings)
+        }
+        if (vm.recents.isNotEmpty()) {
+            Spacer(Modifier.height(32.dp))
+            Text("Continuar assistindo", style = T.ChannelName)
+            Spacer(Modifier.height(10.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+                items(vm.recents.take(20), key = { it.item.url }) { progress ->
+                    RecentCard(
+                        progress,
+                        onClick = { vm.openRecent(progress) },
+                        onLongClick = { vm.removeRecent(progress) },
+                        modifier = Modifier.width(120.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HubCard(
+    title: String,
+    subtitle: String,
+    icon: String,
+    tint: Color,
+    modifier: Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(20.dp)
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(200.dp),
+        shape = ClickableSurfaceDefaults.shape(shape),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = C.Widget,
+            focusedContainerColor = C.CardHover,
+            disabledContainerColor = C.Widget.copy(alpha = 0.4f),
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(BorderStroke(1.dp, C.Separator), shape = shape),
+            focusedBorder = Border(BorderStroke(3.dp, C.FocusRing), shape = shape),
+        ),
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.16f), Color.Transparent)))
+                .padding(24.dp),
+        ) {
+            Text(icon, style = TextStyle(fontSize = 34.sp, color = tint))
+            Spacer(Modifier.weight(1f))
+            Text(title, style = T.Title.copy(fontSize = 22.sp, color = if (enabled) C.Heading else C.Muted))
+            Text(subtitle, style = T.Subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+// ---------- Configurações (listas) ----------
+
+@Composable
+fun SettingsScreen(vm: MainViewModel) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -54,36 +177,21 @@ fun HomeScreen(vm: MainViewModel) {
     }
 
     Column(Modifier.fillMaxSize().background(C.Shell)) {
-        // Cabeçalho escuro como a tela de boas-vindas do IPTVnator.
-        Row(
-            Modifier.fillMaxWidth().background(C.Rail).padding(horizontal = 48.dp, vertical = 24.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Image(painterResource(R.drawable.banner), null, Modifier.size(width = 96.dp, height = 54.dp))
-            Spacer(Modifier.width(20.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Telvo", style = T.Title.copy(fontSize = 24.sp))
-                Text(
-                    "Escolha uma lista ou adicione uma nova pela URL",
-                    style = T.Subtitle.copy(fontSize = 15.sp),
-                )
-            }
-            Pill(onClick = vm::newPlaylist, active = true) { Text("+  Adicionar por URL") }
+        TopBar(vm, "Configurações", "Suas listas IPTV", showBack = vm.current != null) {
+            Pill(onClick = vm::newPlaylist, active = true) { Text("+  Adicionar lista") }
         }
-
-        Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 20.dp)) {
-            Text("LISTAS", style = T.Label, modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
+        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp)) {
             if (vm.loading && vm.progress == null) {
                 Text("Carregando…", style = T.Subtitle, modifier = Modifier.padding(12.dp))
-            } else {
-                StatusLine(vm, Modifier.padding(12.dp))
             }
             if (vm.playlists.isEmpty()) {
-                Text(
-                    "Nenhuma lista ainda. Use \"Adicionar por URL\" ou envie pelo adb (veja o README).",
-                    style = T.Subtitle,
-                    modifier = Modifier.padding(12.dp),
-                )
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Text("Bem-vindo ao Telvo", style = T.Title.copy(fontSize = 22.sp))
+                    Text("Adicione a URL M3U ou Xtream (get.php) do seu provedor para começar.", style = T.Subtitle)
+                    Spacer(Modifier.height(16.dp))
+                    Pill(onClick = vm::newPlaylist, active = true, modifier = Modifier.focusRequester(first)) { Text("+  Adicionar lista") }
+                }
+                return@Column
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 itemsIndexed(vm.playlists, key = { _, p -> p.id }) { i, p ->
@@ -110,7 +218,12 @@ private fun PlaylistRow(vm: MainViewModel, p: Playlist, modifier: Modifier) {
                 }
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text(p.name, style = T.ChannelName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (p.id == vm.current?.id) "${p.name}  ·  em uso" else p.name,
+                        style = T.ChannelName,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     val updated = if (p.updatedAt > 0) " · Atualizada ${dateTimeFormat.format(Date(p.updatedAt))}" else ""
                     Text(
                         "Canais: ${p.channelCount} · Adicionada em ${dateFormat.format(Date(p.addedAt))}$updated",

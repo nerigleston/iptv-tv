@@ -82,25 +82,9 @@ fun WatchScreen(vm: MainViewModel) {
         prompt != null -> ResumeScreen(vm, prompt)
         vod != null -> VodPlayerScreen(vm, vod)
         vm.section == Section.LIVE -> LiveSection(vm)
-        vm.section == Section.RECENT -> RecentScreen(vm)
         vm.openSeries != null -> SeriesDetail(vm)
         else -> VodBrowser(vm)
     }
-}
-
-// Seletor Ao vivo | Filmes | Séries no topo da coluna esquerda (como o nav-rail do IPTVnator).
-@Composable
-fun SectionPills(vm: MainViewModel) {
-    if (!vm.hasVod) return
-    // Quatro pílulas não cabem na coluna: a linha rola conforme o foco anda.
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-        Section.entries.forEach { s ->
-            Pill(onClick = { vm.openSection(s) }, active = vm.section == s, horizontalPadding = 12.dp) {
-                Text(s.label, maxLines = 1)
-            }
-        }
-    }
-    Spacer(Modifier.height(10.dp))
 }
 
 // O player ao vivo só existe nesta seção: ao ir para Filmes/Séries ele é liberado,
@@ -116,86 +100,85 @@ private fun LiveSection(vm: MainViewModel) {
     LaunchedEffect(player, channel?.url) { channel?.let { player.play(it.url) } }
     // Para o stream quando a TV vai para outro app e retoma ao voltar.
     LifecycleStartEffect(player) {
-        player.resume()
+        if (!player.paused) player.resume()
         onStopOrDispose { player.stop() }
     }
 
-    val epgVisible = vm.showEpg && vm.hasEpg
-    Row(Modifier.fillMaxSize().background(C.Shell)) {
-        if (!vm.fullscreen) ChannelSidebar(vm, Modifier.width(300.dp).fillMaxHeight())
-        PlayerPane(vm, player, Modifier.weight(1f).fillMaxHeight())
-        if (!vm.fullscreen && epgVisible) EpgPanel(vm, Modifier.width(300.dp).fillMaxHeight())
+    Column(Modifier.fillMaxSize().background(C.Shell)) {
+        if (!vm.fullscreen) TopBar(vm, "TV", playlist.name)
+        Row(Modifier.fillMaxSize()) {
+            if (!vm.fullscreen) ChannelSidebar(vm, Modifier.width(320.dp).fillMaxHeight())
+            PlayerPane(vm, player, Modifier.weight(1f).fillMaxHeight())
+        }
     }
 }
 
-// ---------- Lista lateral (abas, busca, canais) ----------
+// ---------- Lista lateral (busca, filtro único, canais) ----------
 
 @Composable
 private fun ChannelSidebar(vm: MainViewModel, modifier: Modifier) {
-    val list = remember(vm.tab, vm.group, vm.query, vm.channels, vm.favorites) { vm.visibleChannels() }
-    val showGroups = vm.tab == SidebarTab.GROUPS && vm.group == null && vm.query.isBlank()
+    val list = remember(vm.filter, vm.query, vm.channels, vm.favorites) { vm.visibleChannels() }
+    var picking by remember { mutableStateOf(false) }
+    val searching = vm.query.isNotBlank()
 
-    Column(modifier.background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 16.dp)) {
-        SectionPills(vm)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SidebarTab.entries.forEach { t ->
-                Pill(
-                    onClick = {
-                        vm.tab = t
-                        vm.focusPlaying = true
-                    },
-                    active = vm.tab == t,
-                    modifier = Modifier.weight(1f),
-                ) { Text(t.label, maxLines = 1) }
+    Column(modifier.background(C.Rail).padding(start = 12.dp, end = 12.dp, top = 12.dp)) {
+        TvTextField(vm.query, { vm.query = it }, placeholder = "Buscar canal", imeAction = ImeAction.Search)
+        Spacer(Modifier.height(8.dp))
+        // Um único seletor no lugar das abas Todos/Grupos/Favoritos.
+        TvRow(onClick = { picking = !picking }, selected = picking, radius = 12) {
+            Row(Modifier.height(52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (searching) "Resultados da busca" else vm.filterTitle,
+                        style = T.ChannelName.copy(fontSize = 14.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text("${list.size} canais", style = T.Meta)
+                }
+                Text(if (picking) "▴" else "▾", style = T.Title.copy(color = C.Body))
             }
         }
-        Spacer(Modifier.height(10.dp))
-        TvTextField(vm.query, { vm.query = it }, placeholder = "Buscar canal", imeAction = ImeAction.Search)
-        Spacer(Modifier.height(10.dp))
-        Text(
-            when {
-                showGroups -> "${vm.groups.size} GRUPOS"
-                vm.tab == SidebarTab.GROUPS && vm.group != null -> vm.group!!.uppercase()
-                else -> "${list.size} CANAIS"
-            },
-            style = T.Label,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
-        )
-        key(vm.tab, vm.group, showGroups) {
-            if (showGroups) {
-                GroupList(vm)
+        Spacer(Modifier.height(8.dp))
+        key(picking, searching) {
+            if (picking && !searching) {
+                FilterList(vm) { picking = false }
             } else {
-                val header = if (vm.tab == SidebarTab.GROUPS && vm.group != null && vm.query.isBlank()) vm.group else null
-                ChannelList(vm, list, header)
+                ChannelList(vm, list)
             }
         }
     }
 }
 
 @Composable
-private fun GroupList(vm: MainViewModel) {
-    val target = vm.groups.indexOf(vm.lastGroup).coerceAtLeast(0)
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = (target - 3).coerceAtLeast(0))
+private fun FilterList(vm: MainViewModel, done: () -> Unit) {
     val focus = remember { FocusRequester() }
-    LaunchedEffect(vm.focusPlaying) {
-        if (vm.focusPlaying) {
-            withFrameNanos { }
-            runCatching { focus.requestFocus() }
-            vm.focusPlaying = false
-        }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { focus.requestFocus() }
     }
+    val options = remember(vm.groups, vm.favorites) {
+        listOf<Pair<LiveFilter, String>>(LiveFilter.All to "Todos os canais", LiveFilter.Favorites to "★  Favoritos") +
+            vm.groups.map { LiveFilter.Group(it) to it }
+    }
+    val selected = options.indexOfFirst { it.first == vm.filter }.coerceAtLeast(0)
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = (selected - 3).coerceAtLeast(0))
     LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        itemsIndexed(vm.groups) { i, g ->
+        itemsIndexed(options) { i, (f, label) ->
+            val count = when (f) {
+                LiveFilter.All -> vm.channels.size
+                LiveFilter.Favorites -> vm.favoritesCount
+                is LiveFilter.Group -> vm.groupSize(f.name)
+            }
             TvRow(
-                onClick = { vm.showGroup(g) },
+                onClick = { vm.applyFilter(f); done() },
+                selected = f == vm.filter,
                 radius = 8,
-                modifier = if (i == target) Modifier.focusRequester(focus) else Modifier,
+                modifier = if (i == selected) Modifier.focusRequester(focus) else Modifier,
             ) {
                 Row(Modifier.height(40.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(g, style = T.Row.copy(color = androidx.tv.material3.LocalContentColor.current), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text("${vm.groupSize(g)}", style = T.Meta.copy(fontSize = 12.sp, color = C.Muted))
+                    Text(label, style = T.Row.copy(color = androidx.tv.material3.LocalContentColor.current), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("$count", style = T.Meta.copy(fontSize = 12.sp, color = C.Muted))
                 }
             }
         }
@@ -203,10 +186,11 @@ private fun GroupList(vm: MainViewModel) {
 }
 
 @Composable
-private fun ChannelList(vm: MainViewModel, list: List<Channel>, header: String?) {
+private fun ChannelList(vm: MainViewModel, list: List<Channel>) {
+    val header: String? = null
     if (list.isEmpty() && header == null) {
         Text(
-            if (vm.tab == SidebarTab.FAVORITES) "Nenhum favorito ainda.\nSegure OK num canal para favoritar." else "Nenhum canal encontrado.",
+            if (vm.filter == LiveFilter.Favorites && vm.query.isBlank()) "Nenhum favorito ainda.\nSegure OK num canal para favoritar." else "Nenhum canal encontrado.",
             style = T.Subtitle,
             modifier = Modifier.padding(12.dp),
         )
@@ -230,7 +214,7 @@ private fun ChannelList(vm: MainViewModel, list: List<Channel>, header: String?)
         if (header != null) {
             item {
                 TvRow(
-                    onClick = { vm.showGroup(null) },
+                    onClick = { vm.applyFilter(LiveFilter.All) },
                     radius = 8,
                     modifier = if (list.isEmpty()) Modifier.focusRequester(focus) else Modifier,
                 ) {
@@ -350,7 +334,6 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
     }
 
     Column(modifier.background(Color.Black)) {
-        if (!vm.fullscreen) PlayerHeader(vm, player, channel, now)
         Box(
             Modifier
                 .weight(1f)
@@ -425,75 +408,7 @@ private fun PlayerPane(vm: MainViewModel, player: TvPlayer, modifier: Modifier) 
                     )
             }
         }
-        if (!vm.fullscreen && channel != null) {
-            Text(
-                "OK no vídeo abre a tela cheia · CH+/CH− trocam de canal · na tela cheia: OK pausa, ← → volume",
-                style = T.Meta.copy(color = C.Muted),
-                modifier = Modifier.fillMaxWidth().background(C.Content).padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-    }
-}
-
-// Cabeçalho como o standard-panel-header: título à esquerda e ações em pílula.
-@Composable
-private fun PlayerHeader(vm: MainViewModel, player: TvPlayer, channel: Channel?, now: Programme?) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(C.WidgetHeader)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                channel?.name ?: vm.current?.name.orEmpty(),
-                style = T.Title.copy(fontSize = 16.sp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            if (now != null) {
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    now.title,
-                    style = T.Meta.copy(fontSize = 12.sp, color = C.Body),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .background(C.Widget, RoundedCornerShape(999.dp))
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                        .weight(1f, fill = false),
-                )
-            }
-        }
-        // A coluna central é estreita: as pílulas rolam na horizontal conforme o foco anda.
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-            if (channel != null) {
-                val fav = channel.url in vm.favorites
-                Pill(onClick = { vm.toggleFavorite(channel) }, active = fav) { Text(if (fav) "★" else "☆") }
-            }
-            Pill(onClick = { player.togglePause() }, active = player.paused, enabled = channel != null) {
-                Text(if (player.paused) "▶ Ao vivo" else "❚❚ Pausar")
-            }
-            Pill(onClick = { player.changeVolume(-10) }, enabled = channel != null) { Text("Vol −") }
-            Pill(onClick = { player.toggleMute() }, active = player.muted, enabled = channel != null) {
-                Text(if (player.muted) "Mudo" else "${player.volume}%")
-            }
-            Pill(onClick = { player.changeVolume(10) }, enabled = channel != null) { Text("Vol +") }
-            Pill(onClick = { vm.showEpg = !vm.showEpg }, active = vm.showEpg && vm.hasEpg, enabled = vm.hasEpg) {
-                Text("Guia")
-            }
-            Pill(onClick = { vm.fullscreen = true }, enabled = channel != null) { Text("Tela cheia") }
-            vm.current?.let { p ->
-                Pill(onClick = { vm.refresh(p) }, enabled = !vm.loading) { Text(if (vm.loading) "Atualizando…" else "Atualizar") }
-            }
-            Pill(onClick = vm::goHome) { Text("Listas") }
-        }
-        StatusLine(vm)
+        if (!vm.fullscreen && channel != null) NowNextCard(vm, player, channel, now, next)
     }
 }
 
@@ -560,104 +475,6 @@ private fun InfoOverlay(
     }
 }
 
-// ---------- Guia (EPG) ----------
-
-@Composable
-private fun EpgPanel(vm: MainViewModel, modifier: Modifier) {
-    val channel = vm.playing
-    val zone = ZoneId.systemDefault()
-    val today = LocalDate.now(zone)
-    var day by remember(channel?.url) { mutableStateOf(today) }
-    val all = remember(channel?.url, vm.epg, vm.shortEpg) { channel?.let { vm.programmes(it) }.orEmpty() }
-    val programmes = remember(all, day) { all.filter { Instant.ofEpochMilli(it.start).atZone(zone).toLocalDate() == day } }
-    val now = channel?.let { vm.nowFor(it) }
-
-    Column(modifier.background(C.Content)) {
-        Row(
-            Modifier.fillMaxWidth().background(C.Widget).padding(horizontal = 16.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (channel != null) {
-                Logo(channel, vm.playingNumber, 36)
-                Spacer(Modifier.width(10.dp))
-            }
-            Column {
-                Text(channel?.name ?: "Guia", style = T.ChannelName.copy(fontSize = 13.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(now?.title ?: "Guia de programação", style = T.Meta.copy(fontSize = 10.sp, color = C.Muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        // Pílula de data com setas (.g-date).
-        Row(
-            Modifier
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-                .fillMaxWidth()
-                .background(C.WidgetHeader, RoundedCornerShape(999.dp))
-                .border(1.dp, C.Separator, RoundedCornerShape(999.dp))
-                .padding(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Pill(onClick = { day = day.minusDays(1) }) { Text("‹") }
-            Text(
-                when (day) {
-                    today -> "Hoje"
-                    today.plusDays(1) -> "Amanhã"
-                    today.minusDays(1) -> "Ontem"
-                    else -> day.format(dayFormat)
-                },
-                style = T.ChannelName.copy(fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-            Pill(onClick = { day = day.plusDays(1) }) { Text("›") }
-        }
-        val empty = when {
-            vm.epgLoading && all.isEmpty() -> "Carregando guia…"
-            channel == null -> "Escolha um canal"
-            all.isEmpty() -> "Sem programação para este canal"
-            programmes.isEmpty() -> "Sem programação neste dia"
-            else -> null
-        }
-        if (empty != null) {
-            Text(empty, style = T.Subtitle, modifier = Modifier.padding(18.dp))
-            return@Column
-        }
-        val liveIndex = programmes.indexOfFirst { vm.now >= it.start && vm.now < it.stop }
-        val state = rememberLazyListState()
-        LaunchedEffect(programmes) {
-            if (liveIndex >= 0) state.scrollToItem((liveIndex - 1).coerceAtLeast(0))
-        }
-        LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(horizontal = 8.dp)) {
-            itemsIndexed(programmes) { i, p -> ProgrammeItem(p, live = i == liveIndex, past = p.stop <= vm.now, now = vm.now) }
-        }
-    }
-}
-
-@Composable
-private fun ProgrammeItem(p: Programme, live: Boolean, past: Boolean, now: Long) {
-    var focused by remember { mutableStateOf(false) }
-    TvRow(
-        onClick = {},
-        selected = live,
-        radius = 10,
-        modifier = Modifier.onFocusChanged { focused = it.isFocused }.alpha(if (past && !focused) 0.55f else 1f),
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${formatTime(p.start)} – ${formatTime(p.stop)}", style = T.Meta.copy(color = C.Muted))
-                if (live) {
-                    Spacer(Modifier.width(8.dp))
-                    LiveTag()
-                }
-            }
-            Text(p.title, style = T.ChannelName.copy(fontSize = 13.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (live) ProgressBar(progress(p, now), Modifier.width(84.dp))
-            if (focused && p.description != null) {
-                Text(p.description, style = T.Meta.copy(fontSize = 12.sp), maxLines = 5, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}
-
 // Volume atual: "Volume 70%" com barrinha, ou "Mudo".
 @Composable
 fun VolumeLine(player: TvPlayer, modifier: Modifier = Modifier) {
@@ -668,5 +485,41 @@ fun VolumeLine(player: TvPlayer, modifier: Modifier = Modifier) {
             modifier = Modifier.width(90.dp),
         )
         ProgressBar(if (player.muted) 0f else player.volume / 100f, Modifier.width(120.dp))
+    }
+}
+
+// "Agora / A seguir" embaixo do vídeo (substitui o painel do guia).
+@Composable
+private fun NowNextCard(vm: MainViewModel, player: TvPlayer, channel: Channel, now: Programme?, next: Programme?) {
+    Row(
+        Modifier.fillMaxWidth().background(C.Content).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Logo(channel, vm.playingNumber, 48)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(channel.name, style = T.ChannelName, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (channel.url in vm.favorites) Text("  ★", style = T.Meta.copy(color = C.Selection, fontSize = 13.sp))
+            }
+            if (now != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LiveTag()
+                    Spacer(Modifier.width(8.dp))
+                    Text(now.title, style = T.Meta.copy(fontSize = 12.sp, color = C.Heading), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                ProgressBar(progress(now, vm.now), Modifier.width(220.dp))
+            } else {
+                Text(channel.group, style = T.Meta)
+            }
+        }
+        Spacer(Modifier.width(16.dp))
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (next != null) {
+                Text("A SEGUIR · ${formatTime(next.start)}", style = T.Label)
+                Text(next.title, style = T.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+            }
+            Text("OK no vídeo: tela cheia · lá, OK pausa e ← → volume", style = T.Meta.copy(color = C.Muted))
+        }
     }
 }

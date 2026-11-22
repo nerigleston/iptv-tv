@@ -14,22 +14,23 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 enum class Section(val label: String) {
-    LIVE("Ao vivo"),
-    MOVIES("Filmes"),
+    LIVE("TV"),
     SERIES("Séries"),
-    RECENT("Recentes"),
+    MOVIES("Filmes"),
 }
 
-enum class SidebarTab(val label: String) {
-    ALL("Todos"),
-    GROUPS("Grupos"),
-    FAVORITES("Favoritos"),
+// Filtro único da lista de canais: substitui as abas Todos/Grupos/Favoritos.
+sealed interface LiveFilter {
+    data object All : LiveFilter
+    data object Favorites : LiveFilter
+    data class Group(val name: String) : LiveFilter
 }
 
 sealed interface Screen {
-    data object Home : Screen
+    data object Hub : Screen          // Início: TV, Séries, Filmes, Configurações
+    data object Watch : Screen        // dentro de TV, Séries ou Filmes
+    data object Settings : Screen     // listas
     data class Form(val editing: Playlist?) : Screen
-    data object Watch : Screen
 }
 
 data class PlaylistForm(
@@ -55,7 +56,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     var playlists by mutableStateOf(store.playlists())
         private set
-    var screen by mutableStateOf<Screen>(Screen.Home)
+    var screen by mutableStateOf<Screen>(Screen.Hub)
         private set
     var current by mutableStateOf<Playlist?>(null)
         private set
@@ -83,12 +84,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Ao vivo
     var section by mutableStateOf(Section.LIVE)
         private set
-    var tab by mutableStateOf(SidebarTab.ALL)
+    var filter by mutableStateOf<LiveFilter>(LiveFilter.All)
     var query by mutableStateOf("")
-    var group by mutableStateOf<String?>(null)
-        private set
-    var lastGroup by mutableStateOf<String?>(null)
-        private set
     var playing by mutableStateOf<Channel?>(null)
         private set
     var playingNumber by mutableStateOf(0)
@@ -129,7 +126,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val epgUrl get() = current?.epgUrl ?: m3uEpgUrl
     val hasEpg get() = epgUrl != null || xtream != null
     val isXtream get() = xtream != null
-    val canGoBack get() = screen != Screen.Home
+    // No Início, Voltar sai do app (comportamento padrão da TV).
+    val canGoBack get() = screen != Screen.Hub && !(screen == Screen.Settings && current == null)
     val hasVod get() = xtream != null || movies.isNotEmpty() || seriesList.isNotEmpty()
 
     init {
@@ -139,27 +137,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 now = System.currentTimeMillis()
             }
         }
-        store.lastPlaylistId?.let { id -> playlists.firstOrNull { it.id == id } }?.let(::open)
+        val last = store.lastPlaylistId?.let { id -> playlists.firstOrNull { it.id == id } }
+        if (last != null) open(last) else screen = Screen.Settings
     }
 
     // ---------- Ao vivo ----------
 
     fun visibleChannels(): List<Channel> {
         val q = normalize(query)
-        val base = when (tab) {
-            SidebarTab.ALL -> channels
-            SidebarTab.FAVORITES -> channels.filter { it.url in favorites }
-            // Buscando sem grupo aberto, procura em todos os canais.
-            SidebarTab.GROUPS -> group?.let { byGroup[it] } ?: if (q.isEmpty()) emptyList() else channels
+        // Buscando, procura em todos os canais.
+        if (q.isNotEmpty()) return channels.filter { normalize(it.name).contains(q) }
+        return when (val f = filter) {
+            LiveFilter.All -> channels
+            LiveFilter.Favorites -> channels.filter { it.url in favorites }
+            is LiveFilter.Group -> byGroup[f.name].orEmpty()
         }
-        return if (q.isEmpty()) base else base.filter { normalize(it.name).contains(q) }
     }
 
     fun groupSize(name: String) = byGroup[name]?.size ?: 0
 
-    fun showGroup(name: String?) {
-        if (name != null) lastGroup = name
-        group = name
+    val favoritesCount get() = channels.count { it.url in favorites }
+
+    val filterTitle get() = when (val f = filter) {
+        LiveFilter.All -> "Todos os canais"
+        LiveFilter.Favorites -> "Favoritos"
+        is LiveFilter.Group -> f.name
+    }
+
+    fun applyFilter(f: LiveFilter) {
+        filter = f
         focusPlaying = true
     }
 
@@ -187,6 +193,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Seções, filmes e séries ----------
 
     fun openSection(s: Section) {
+        screen = Screen.Watch
+        focusPlaying = true
         if (section == s) return
         section = s
         vodCategory = null
@@ -318,9 +326,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         screen = Screen.Form(p)
     }
 
+    fun openSettings() {
+        clearMessages()
+        screen = Screen.Settings
+    }
+
+    // Volta para o Início (hub). Sem lista aberta, o Início é a tela de listas.
     fun goHome() {
         fullscreen = false
-        screen = Screen.Home
+        vodPlayback = null
+        resumePrompt = null
+        screen = if (current == null) Screen.Settings else Screen.Hub
     }
 
     // adb shell am start -n dev.neri.iptv/.MainActivity --es playlist_url "<url>" [--es name "<nome>"]
@@ -375,7 +391,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     // Força recarregar na próxima vez que abrir.
                     if (current?.id == saved.id) current = null
-                    screen = Screen.Home
+                    screen = Screen.Settings
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -405,9 +421,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     loadEpg(updated, force = !quiet)
                     // Recarrega a seção de VOD aberta com os dados novos.
                     val open = section
+                    val where = screen
                     if (open != Section.LIVE) {
                         section = Section.LIVE
                         openSection(open)
+                        screen = where
                     }
                 }
                 if (!quiet) notice = "\"${p.name}\" atualizada: $count canais ao vivo"
@@ -438,7 +456,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(p: Playlist) {
         if (current?.id == p.id && channels.isNotEmpty()) {
-            enterWatch()
+            enterHub()
             return
         }
         loadJob?.cancel()
@@ -456,14 +474,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val last = store.lastChannel(latest.id)
                 val index = channels.indexOfFirst { it.url == last }
                 if (index >= 0) setPlaying(channels, index) else playing = null
-                enterWatch()
+                enterHub()
                 loadEpg(latest, force = false)
                 if (latest.autoUpdate && latest.updatedAt > 0) refresh(latest, quiet = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 error = "Não consegui abrir a lista: ${e.message ?: e.javaClass.simpleName}"
-                screen = Screen.Home
+                screen = Screen.Settings
             } finally {
                 loading = false
                 progress = null
@@ -485,16 +503,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 fullscreen = false
                 focusPlaying = true
             }
-            screen is Screen.Form -> screen = Screen.Home
+            screen is Screen.Form -> screen = Screen.Settings
+            screen == Screen.Settings -> if (current != null) screen = Screen.Hub
             openSeries != null -> {
                 openSeries = null
                 focusPlaying = true
             }
             section != Section.LIVE && vodQuery.isNotEmpty() -> vodQuery = ""
-            section != Section.LIVE -> openSection(Section.LIVE)
-            query.isNotEmpty() -> query = ""
-            tab == SidebarTab.GROUPS && group != null -> showGroup(null)
-            else -> screen = Screen.Home
+            section == Section.LIVE && query.isNotEmpty() -> query = ""
+            else -> screen = Screen.Hub
         }
     }
 
@@ -577,12 +594,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun enterWatch() {
-        group = null
+    private fun enterHub() {
         query = ""
         fullscreen = false
-        focusPlaying = true
-        screen = Screen.Watch
+        screen = Screen.Hub
     }
 
     private fun setPlaying(list: List<Channel>, index: Int) {
