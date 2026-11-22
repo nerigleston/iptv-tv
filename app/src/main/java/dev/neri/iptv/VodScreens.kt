@@ -3,6 +3,9 @@ package dev.neri.iptv
 import androidx.annotation.OptIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -88,7 +91,15 @@ fun VodBrowser(vm: MainViewModel) {
         else -> vm.section.label
     }
 
-    Column(Modifier.fillMaxSize().background(C.Shell)) {
+    var drawer by remember { mutableStateOf(false) }
+    // Fechar a gaveta devolve o foco aos títulos.
+    BackHandler(enabled = drawer) {
+        drawer = false
+        vm.focusPlaying = true
+    }
+
+    Box(Modifier.fillMaxSize().background(C.Shell)) {
+    Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -97,7 +108,7 @@ fun VodBrowser(vm: MainViewModel) {
                 Text(title, style = T.Title.copy(fontSize = 26.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (searching || category != null) {
                     val count = vm.vodItems().size
-                    Text(if (count == 1) "1 título · Voltar para sair" else "$count títulos · Voltar para sair", style = T.Subtitle)
+                    Text(if (count == 1) "1 título · Voltar para sair" else "$count títulos · ← categorias · Voltar sai", style = T.Subtitle)
                 }
             }
             StatusLine(vm)
@@ -119,6 +130,76 @@ fun VodBrowser(vm: MainViewModel) {
             else -> VodRows(vm, categories, all)
         }
     }
+    // Borda invisível à esquerda: ← no primeiro título chega nela e abre a gaveta de categorias,
+    // do mesmo jeito que os grupos na TV ao vivo.
+    if (!drawer) {
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .width(2.dp)
+                .fillMaxHeight()
+                .onFocusChanged { if (it.isFocused) drawer = true }
+                .focusable(),
+        )
+    }
+    if (drawer) {
+        CategoryDrawer(vm, categories, all.size, Modifier.align(Alignment.CenterStart)) { drawer = false }
+    }
+    }
+}
+
+// Gaveta de categorias (abre com ←). "Todas" volta para as fileiras.
+@Composable
+private fun CategoryDrawer(vm: MainViewModel, categories: List<Category>, total: Int, modifier: Modifier, close: () -> Unit) {
+    val counts = remember(vm.section, vm.movies, vm.seriesList) { vm.vodCounts() }
+    val options = remember(categories) { listOf<Category?>(null) + categories }
+    val selected = options.indexOfFirst { it?.id == vm.vodCategory }.coerceAtLeast(0)
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = (selected - 4).coerceAtLeast(0))
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { focus.requestFocus() }
+    }
+    Column(
+        modifier
+            .fillMaxHeight()
+            .background(Brush.horizontalGradient(listOf(Color(0xFA0D0F12), Color(0xF00D0F12), Color(0xB30D0F12), Color.Transparent)))
+            .padding(start = 32.dp, top = 28.dp, bottom = 20.dp, end = 140.dp),
+    ) {
+        Text("CATEGORIAS", style = T.Label, modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
+        LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.width(320.dp)) {
+            itemsIndexed(options) { i, c ->
+                TvRow(
+                    onClick = {
+                        if (c == null) {
+                            vm.vodCategory = null
+                            vm.vodQuery = ""
+                            vm.vodFocusId = null
+                            vm.focusPlaying = true
+                        } else {
+                            vm.vodQuery = ""
+                            vm.openCategory(c.id)
+                        }
+                        close()
+                    },
+                    selected = c?.id == vm.vodCategory,
+                    radius = 10,
+                    modifier = if (i == selected) Modifier.focusRequester(focus) else Modifier,
+                ) {
+                    Row(Modifier.height(44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            c?.let { shortCategory(it.name) } ?: "Todas (fileiras)",
+                            style = T.Row.copy(color = androidx.tv.material3.LocalContentColor.current),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("${c?.let { counts[it.id] ?: 0 } ?: total}", style = T.Meta.copy(fontSize = 12.sp, color = C.Muted))
+                    }
+                }
+            }
+        }
+    }
 }
 
 private const val ROW_LIMIT = 30
@@ -136,9 +217,14 @@ private fun VodRows(vm: MainViewModel, categories: List<Category>, all: List<Vod
     val focus = remember { FocusRequester() }
     LaunchedEffect(vm.focusPlaying, rows.size) {
         if (vm.focusPlaying && rows.isNotEmpty()) {
-            withFrameNanos { }
-            withFrameNanos { }
-            if (runCatching { focus.requestFocus() }.isSuccess) vm.focusPlaying = false
+            // As fileiras levam alguns quadros para montar: tenta até conseguir.
+            repeat(30) {
+                withFrameNanos { }
+                if (runCatching { focus.requestFocus() }.isSuccess) {
+                    vm.focusPlaying = false
+                    return@LaunchedEffect
+                }
+            }
         }
     }
 
