@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+local.properties
+*.iml
+._*
+.DS_Store
+
+# Passo a passo com a URL e a senha da lista
+INSTALACAO.md
